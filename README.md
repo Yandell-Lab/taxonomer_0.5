@@ -28,7 +28,7 @@ is available here: http://sourceforge.net/projects/kanalyze/files/
 
 The following is a command line example of kanalyze with the necessary paramaters (-k is the kmer size):      
   
-`java -jar kanalyze.jar count -k 31 -d 30 -l 30 -o \<output file\> -m hex -rcanonical -f fasta \<input fasta\>`
+`java -jar kanalyze.jar count -k 31 -d 3 -l 3 -o \<output file\> -m hex -rcanonical -f fasta \<input fasta\>`
 
 Then use build_db.py to construct the database for classification
 
@@ -40,7 +40,7 @@ To build a protein database, you must follow these steps:
 
 1.  Use convert_protein_db.py to do necessary conversion before using kanalyze
 2.  Run kanalyze to create kmer file, but with the following arguments (-k is the kmer size, no -rcanonical):  
-  `java -jar kanalyze.jar count -k 30 -d 30 -l 30 -o \<output file\> -m hex -f fasta \<input fasta\>`
+  `java -jar kanalyze.jar count -k 30 -d 3 -l 3 -o \<output file\> -m hex -f fasta \<input fasta\>`
 3.  Use python build_db.py, but specify --protein 1 to build protein database
 
 ####Classifying reads
@@ -54,7 +54,7 @@ We have empirically found binning using k-mers of 21bp in length to be effective
 
 1.  Create k-mer count files using kanalze of fasta files of reference nucleotide sequences:
    
- `java -jar kanalyze.jar count -k21 -d 30 -l 30 -o \<output file\> -m hex -f fasta \<input fasta\>`
+ `java -jar kanalyze.jar count -k21 -d 3 -l 3 -o \<output file\> -m hex -f fasta \<input fasta\>`
 
 2.  Merge all k-mer count files using the script binner_merge_kanalyze.py.  The help shows the following: 
     
