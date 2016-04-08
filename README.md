@@ -1,6 +1,8 @@
 #taxonomer
 =========
 
+__Want to do get up and running with taxonomer quickly?  Go to [taxonomer.iobio.io]__
+
 ##metagenomics toolkit 
 
 ###Building the code:
