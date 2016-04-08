@@ -85,5 +85,30 @@ We have empirically found binning using k-mers of 21bp in length to be effective
 
 Where example_binner_db is the prefix for the output files that enable running the binner.  fake.sti and fake.fasta are placeholders and are in the scripts/ folder.  They can be used in any binner database build.  
 
+####Creating taxonomic relationship files
+
+Both building databases and classifying sequences requires knowlege about the taxonomic relationships between the organisms in the database.  __Taxonomer uses two files for this purpose, they have extensions .sti and .tri.__  
+
+The __.sti file__ is used during the build process.  This file assigns every sequence id to a taxonomic id.  It is highly recommended that sequence ids in fasta headers of the reference sequences be non negative integers and it is required that taxonomic ids be non negative integers.  The .sti file is a modified fasta format with the sequence id in the header and the taxonomic id in the sequence line.  For example, suppose we have the following fasta sequence:
+
+\>3 some interesting sequence    
+ATAATATTAGATGTAGATGTTAGTGTAGTGTAGCGCGCGTGTGTGTAGAGA
+
+In the .sti file this sequence could be represented as follows (assuming its assigned taxid is 17):
+
+\>3    
+17
+
+The __.tri file__ is used during classification.  This file describes the parent-child relationship of the taxonomy.  Like the .sti file, the .tri is a modified fasta format with the taxonomic child in the header and the taxonomic parent in the sequence line.  __It is required that the .tri be rooted at taxid '1' with 0 as its parent__.  Thus the following entry must be found in every .tri file:
+
+\>1    
+0
+
+The only retrictions imposed by taxonomer when defining a taxonomy is that every child has exactly 1 parent and the tree be rooted at taxid '1' with 0 as its parent.  For this reason, it is possible to apply taxonomer effectively to a very wide range of mapping problems.  
+
+
+
+
+
 
 
