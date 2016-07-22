@@ -17,7 +17,7 @@ use Getopt::Long;
 #flush buffer
 $| = 1;
 
-my $version = "1.3";
+my $version = "1.4";
 my $scriptname = "wd_prep_classifier_db.pl";
 my $changelog = "
 # Change log for $scriptname
@@ -30,6 +30,8 @@ my $changelog = "
 #            Allow lineages to not have the same length in the input file
 #            => they will be put at the same length when populated down
 #            Be more flexible on the lineage formatting
+#	- v1.4 = 22 July 2017
+#            Bug fix in writing .fa and .sti (was expecting __ in lineages)
 \n";
 
 my $usage = "\nUsage [v$version]: 
@@ -315,10 +317,10 @@ sub print_tri {
 
 #----------------------------------------------------------------------------
 # sti stuff now
-# fasta_and_sti($fasta,$seqIDmap,$taxonomy,$out,$counts,$nonum,$uc);
+# fasta_and_sti($fasta,$seqIDmap,$taxonomy,$out,$counts,$uc);
 #----------------------------------------------------------------------------
 sub fasta_and_sti {
-	my ($fa,$seqIDmap,$taxonomy,$out,$taxid) = @_;
+	my ($fa,$seqIDmap,$taxonomy,$out,$taxid,$uc) = @_;
 	#$taxid+=1;
 	my $sti = $out.".sti";
 	$out = $out."_taxonomer.fa";
@@ -330,15 +332,15 @@ sub fasta_and_sti {
 	LINE: while(<$fh>) {
 		chomp (my $line = $_);
 		if (substr($line,0,1) eq ">") {
-			$line =~ s/^>//;			
+			$line =~ s/^>//;
 			my @header = split(/\s+/,$line);
 			my ($seqid,$lin) = ($header[0],$header[1]);
 			my @desc = @header;
-			splice(@desc,0,2); #remove the first 2 elements; id_name & lineage	
+			splice(@desc,0,2); #remove the first 2 elements; id_name & lineage
 			my $desc = ""; #just in case			
 			$desc = join(" ",@desc) if ($desc[0]); #re-build the description if any
 			#checks
-			if (((! $lin) || ($lin eq "nd") || ($lin !~ /^00__/)) || ($check{$seqid})){
+			if ((! $lin) || ($lin eq "nd") || ($check{$seqid})){
 				$skip = 1;
 			} else {	
 				my $lineage = join(";",@{$taxonomy->{$seqid}});
