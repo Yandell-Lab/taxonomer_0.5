@@ -25,6 +25,7 @@ To build, cd into taxonomer/ -- directory where all the code lives, type the fol
 
 To build a database, you must use kanalyze to create the kmer file. You do this with kanalyze, which
 is available here: http://sourceforge.net/projects/kanalyze/files/
+Note that Taxonomer will ignore kmers with sequences in lower case
 
 The following is a command line example of kanalyze with the necessary paramaters (-k is the kmer size):      
   
