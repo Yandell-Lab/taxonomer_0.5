@@ -12,11 +12,13 @@ use Getopt::Long;
 use JSON::Parse 'json_file_to_perl';
 use Data::Dumper;
 
-my $version = "1.0";
+my $version = "2.0";
 my $scriptname = "TaxoWeb_json-to-tab.pl";
 my $changelog = "
 #	- v1.0 = 20-24 June 2016
-# 
+#	- v2.0 = 12 Aug 2016
+#            Bug fix - output was incomplete (was not going back up the levels while looping)
+ 
 
 \n";
 
@@ -28,6 +30,7 @@ my $usage = "\nUsage [v$version]:
     PURPOSE:
     Convert the taxonomer .json output from the www.taxonomer.com web interface
     to a 2 columns table containing the number of reads classified at each level (=lineages)
+    as well as a lighter output (shorter lineage strings; everything before the phylum, when any, is kicked out, and all \"no_rank:\" are removed
 		
     MANDATORY ARGUMENTS:	
      -i,--in      => (STRING) input files = output file in json format of taxonomer.com
@@ -112,9 +115,12 @@ INPUT: foreach my $in (@{$listin}) {
 		next INPUT;
 	}
 	print STDERR "     Loading the data\n" if ($v);
-	my $p = json_file_to_perl ($in);
+	my $p = json_file_to_perl($in);		
 	my $data = load_json($p,$v);
 	print STDERR "     Printing the data in $outname.tab\n" if ($v);
+	print STDERR "     Printing lighter data in $outname.light.tab\n" if ($v);
+	print STDERR "        it is \"light\" because to avoid super long lineage strings,\n" if ($v);
+	print STDERR "        everything before the phylum (when any) is kicked out, and all \"no_rank:\" are removed\n" if ($v);
 	print_json($data,$outname,$v);
 }	
 print STDERR " --- Done\n" if ($v);
@@ -173,7 +179,9 @@ sub input_files {
 			$outname =~ s/\.json//;
 		}
 		`rm -Rf $outname.tab`;
+		`rm -Rf $outname.light.tab`;
 		print STDERR "        rm -Rf $outname.tab\n" if ($v);
+		print STDERR "        rm -Rf $outname.light.tab\n" if ($v);
 		push(@listin,$in);
 		
 	}
@@ -197,48 +205,53 @@ sub load_json {
 		$lineage->{$level}{$bin}{$bin}=$lin;
 		$data->{$level}{$bin}{$lin}=$p->{'binnerResult'}{$bin}; #get counts for that lineage = the binning level
 	}
-	foreach my $bin (keys $p->{'classifierResult'}) {
-		($data,$lineage) = dump_hash($p->{'classifierResult'}{$bin},$bin,$data,$lineage,++$level);	
-		--$level;
-	}	
+ 	foreach my $bin (keys $p->{'classifierResult'}) {
+ 		($data,$lineage) = dump_hash($p->{'classifierResult'}{$bin},$bin,$data,$lineage,++$level);	
+ 		--$level;
+ 	}	
 	return ($data);
 } 
 
 sub dump_hash {
 	my ($ref,$bin,$data,$lineage,$level) = @_;
 	my $name = "undef";
-	$name = $ref->{'name'} if ($ref->{'name'});	
-	$name =~ s/\s+/_/g;
 	my $count = 0;
-	$count = $ref->{'count'} if ($ref->{'count'});
-	my $lpar = $level-1;
-	my $lchi = $level+1;
-	if (defined $ref->{'children'}) {
-		#get the childname and build up the lineage, also store counts at each lineage
-		my $childname = $ref->{'children'}[0]{'name'};
-		$childname =~ s/\s/_/g;
-		if (! $lineage->{$lpar}{$bin}{$name}) {
-			$lineage->{$lpar}{$bin}{$name}=$lineage->{$lpar}{$bin}{$bin};
-			#$lineage->{$level}{$bin}{$bin}=$lineage->{$lpar}{$bin}{$bin};
+	foreach my $key ( keys %{$ref} ) {
+		if ( ref $ref->{$key} eq 'ARRAY' ) { #that means the children => enter
+			my $i=0;
+			until (! $ref->{'children'}[$i]) { #loop on ALL the children
+				#get the full lineage of the child beforehand
+				my $lin;
+				my $childname = $ref->{'children'}[$i]{'name'};
+				$childname =~ s/\s/_/g;
+				$name =~ s/\s/_/g;
+				my $lvl = sprintf("%02d", $level);
+				my $lpar = sprintf("%02d", $level-1);
+				($lineage->{$bin}{$lpar}{$name})?($lin = $lineage->{$bin}{$lpar}{$name}.$lvl."__".$name.";"):($lin=$bin."\t".$lvl."__".$name.";");
+				$lineage->{$bin}{$lvl}{$childname}=$lin; #store that lineage => will be the parental
+				$data->{$lin}=$count;
+				#Now go deeper
+				($data,$lineage) = dump_hash($ref->{'children'}[$i],$bin,$data,$lineage,++$level);
+				--$level;
+				$i++;
+			}	 
+		} else {
+			#not children => the rest
+			$name = $ref->{$key} if ($key eq "name");
+			$count = $ref->{$key} if ($key eq "count");
 		}
-		my $lin = $lineage->{$lpar}{$bin}{$name}.$level."__".$name.";";
-		$lineage->{$level}{$bin}{$childname}=$lin;
-		$data->{$level}{$bin}{$lin}=$count;		
-		($data,$lineage) = dump_hash($ref->{'children'}[0],$bin,$data,$lineage,++$level);    ## sub calls itself => send the children to the next level; it's a list => first element
-		--$level;
 	}
-    return ($data,$lineage);
-
-    
+	return ($data,$lineage);
+  
 # 
-# #NB:
+# #NB, subroutine above based on this:
 # #https://www.daniweb.com/programming/software-development/threads/461091/how-to-find-the-depth-of-perl-hash-which-has-no-consistent-structure
 # sub dump_data {
 #     my ( $ref, $level ) = @_;
 #     die "You can only pass an HASH reference data"
 #       unless ref $ref eq 'HASH';
 #     for ( keys %{$ref} ) {
-#         print $/, 'Level ', $level, "\t" x $level, $_, '=>';
+#         --$level;
 #         if ( ref $ref->{$_} eq 'HASH' ) {
 #             dump_data( $ref->{$_}, ++$level );    ## sub called itself
 #             --$level;
@@ -256,13 +269,15 @@ sub dump_hash {
 sub print_json {
 	my($data,$outname,$v) = @_;
 	open(my $fh, ">", "$outname.tab") or confess "     \nERROR (sub print_json): could not open to write $outname.tab $!\n";
-	foreach my $lvl (keys %{$data}){
-		foreach my $bin (keys %{$data->{$lvl}}){
-			foreach my $lineage (keys %{$data->{$lvl}{$bin}}){
-				print $fh "$lineage\t$data->{$lvl}{$bin}{$lineage}\n";
-			}
-		}		
+	open(my $fh2, ">", "$outname.light.tab") or confess "     \nERROR (sub print_json): could not open to write $outname.light.tab $!\n";
+	foreach my $lin (sort keys %{$data}){
+		print $fh "$lin\t$data->{$lin}\n";	
+		my $lightlin = $lin;
+		$lightlin =~ s/^([A-Za-z]+?\t).+?([0-9][0-9]__phylum:)/$1$2/;
+		$lightlin =~ s/no_rank://g;
+		print $fh2 "$lightlin\t$data->{$lin}\n";
 	}
 	close $fh;
-	return;
+	close $fh2;
+	return 1;
 }
