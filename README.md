@@ -55,7 +55,7 @@ We have empirically found binning using k-mers of 21bp in length to be effective
 
 1.  Create k-mer count files using kanalze of fasta files of reference nucleotide sequences:
    
- `java -jar kanalyze.jar count -k21 -d 3 -l 3 -o \<output file\> -m hex -f fasta \<input fasta\>`
+ `java -jar kanalyze.jar count -k21 -d 3 -l 3 -rcanonical -o \<output file\> -m hex -f fasta \<input fasta\>`
 
 2.  Merge all k-mer count files using the script binner_merge_kanalyze.py.  The help shows the following: 
     
