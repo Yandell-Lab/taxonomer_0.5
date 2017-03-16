@@ -17,8 +17,8 @@ use Getopt::Long;
 #flush buffer
 $| = 1;
 
-my $version = "1.4";
-my $scriptname = "wd_prep_classifier_db.pl";
+my $version = "1.7";
+my $scriptname = "taxo_prep_classifier_db.pl";
 my $changelog = "
 # Change log for $scriptname
 #	- v1.0 = 22 March 2016
@@ -26,19 +26,24 @@ my $changelog = "
 #            print sequences in uppercase if -u
 #	- v1.2 = 12 April 2016
 #            Fix bug to get the whole description
-#	- v1.3 = 21 July 2017
+#	- v1.3 = 21 July 2016
 #            Allow lineages to not have the same length in the input file
 #            => they will be put at the same length when populated down
 #            Be more flexible on the lineage formatting
-#	- v1.4 = 22 July 2017
+#	- v1.4 = 22 July 2016
 #            Bug fix in writing .fa and .sti (was expecting __ in lineages)
+#	- v1.5 = 31 Jan 2017
+#            Bug fix in the tri map...!!
+#	- v1.6 = 16 Mar 2017
+#            Bug fix for lineages without 00__ etc
 \n";
 
 my $usage = "\nUsage [v$version]: 
     perl $scriptname -f input.fasta [-o coredbname] [-s ;] [-t] [-w] [-u] [-v] [-c] [-h]
     
     PURPOSE:
-     Create the files required to build a classification database with Taxonomer 
+     From a fasta file with lineages in their headers,
+     creates the files required to build a classification database with Taxonomer 
 
     DESCRIPTION:
      Input = fasta file containing lineage information
@@ -60,7 +65,7 @@ my $usage = "\nUsage [v$version]:
            example 2: >Seq_ID1    Prokaryotes;Bacteria;Proteobacteria;Ecoli
                       >Seq_ID2    Prokaryotes;Bacteria;Proteobacteria;Senterica
 
-       - Examples that will NOT be processed properly:
+       - Examples that will NOT be processed properly, because 00__ is missing
            example 1: >Seq_ID1    rankValue0;01__rankValue1;02__rankValue2
                       >Seq_ID2    rankValue0;01__rankValue1
 
@@ -72,7 +77,11 @@ my $usage = "\nUsage [v$version]:
            parent_ID
       -> get the seq_id map = .sti
            >seq_id
-           tax_id 
+           tax_id
+      -> get the flexible taxonomy map = .tgs
+           taxID \\t geneID \\t seqID \\t info[string_no_spaces]
+           getting the geneID requires an input file with the geneID for each seqID; 
+           otherwise, geneID will be = seqID
       -> a modified fasta file = _taxonomer.fa
          Will have a shifted header, to have a numerical ID matching the .sti 
          Use grep \"^>\" <coredb>_taxonomer.fa to obtain the correspondance between ID / header 
@@ -122,8 +131,8 @@ die "\n --- $scriptname version $version\n\n" if $v;
 die $changelog if ($chlog);
 die "\n SOME MANDATORY ARGUMENTS MISSING, CHECK USAGE:\n$usage" if ($help || ! $fasta);
 die "\n -f $fasta is not a fasta file?\n\n" unless ($fasta =~ /\.fa|faa|fasta|fas$/);
-die "\n -l $fasta does not exist?\n\n" if (! -e $fasta);
-
+die "\n -f $fasta does not exist?\n\n" if (! -e $fasta);
+($uc)?($uc = "y"):($uc = "n");
 
 #-----------------------------------------------------------------------------
 #----------------------------------- MAIN ------------------------------------
@@ -132,9 +141,10 @@ print STDERR "\n --- $scriptname (v$version)\n";
 print STDERR "     input = $fasta\n";
 if (! $out) {
 	$out = $fasta;
-	$out =~ s/(.*?)\.fa$|\.faa$|\.fasta$|\.fas$/$1/;
+	$out =~ s/\.fa$|\.faa$|\.fasta$|\.fas$//;
 }
 print STDERR "     output core name = $out\n";
+
 print STDERR " --- Getting fasta IDs\n"; #could be all done at the same time, but that way taxIDs will be smaller numbers than the seqIDs
 my @headers = `grep "^>" $fasta`;
 my $nb_seqs = scalar(@headers);
@@ -153,10 +163,12 @@ if (($nb_duplicated_seqids > 0) || ($nb_no_lineage > 0)) {
 }
 print STDERR " --- Obtaining tax id map (tri map) + taxids of each sequence\n";
 my ($taxIDmap,$seqIDmap,$counts) = get_tri_sti($taxonomy);
+
 print STDERR " --- Print .tri, _key.txt and _index.txt files\n";
-print_tri($taxIDmap,$indexmap,$out);
-print STDERR " --- Obtaining the sti map + rewriting the fasta file with populated down lineage and numerical IDs\n";
-fasta_and_sti($fasta,$seqIDmap,$taxonomy,$out,$counts,$uc);
+print_tri_key_idx($taxIDmap,$indexmap,$out);
+
+print STDERR " --- Obtaining the sti map and writing it + rewriting the fasta file with populated down lineage and numerical IDs\n";
+print_fasta_sti_tgs($fasta,$seqIDmap,$taxonomy,$out,$counts,$uc);
 print STDERR " --- DONE\n\n";
 exit;
 
@@ -177,9 +189,9 @@ sub get_maxlvl {
 		my ($seqID,$lin) = split(/\s+/,$header);
 		next HEADER if ((! $lin) || ($lin eq "nd")); #missing ones will be counted later
 		my @nodes;
-		($lin =~ /;/)?(@nodes = split($sep,$lin)):($nodes[0]=$lin);
+		($lin =~ /$sep/)?(@nodes = split($sep,$lin)):($nodes[0]=$lin);
 		$maxlvl = $#nodes+1 unless ($#nodes+1 < $maxlvl);
-	}
+	}	
 	return ($maxlvl);
 }
 
@@ -263,39 +275,42 @@ sub pop_down {
 #----------------------------------------------------------------------------
 sub get_tri_sti {
 	my $taxonomy = shift;	
-	my $taxid = 1;
+	my $taxid = 1; #0 is the root
 	my $seq_id = 1;
 	my %taxIDmap = ();
 	my %seqIDmap = ();
+	my $prev_lineage = "";
 	foreach my $seqID (keys %{$taxonomy}) {
-		my $lineage = "";
-		#For each level, check if exists, otherwise create
+		my $lineage = "";				
 		foreach my $rank (@{$taxonomy->{$seqID}}) {
-			($lineage eq "")?($lineage = $rank):($lineage = $lineage.";".$rank);
-			if (! $taxIDmap{$lineage}) { #loop through all nodes, basically
+			($lineage eq "")?($lineage = $rank):($lineage = $lineage.";".$rank);			
+			if (! $taxIDmap{$lineage}{'own'}) { #loop through all nodes, basically
 				$taxIDmap{$lineage}{'own'}=$taxid;
-				$taxIDmap{$lineage}{'parent'}=$taxid-1; #the parent will necessarily be just one value above
+				($taxIDmap{$prev_lineage}{'own'})?($taxIDmap{$lineage}{'parent'}=$taxIDmap{$prev_lineage}{'own'}):
+				                                  ($taxIDmap{$lineage}{'parent'}=0);
 				$taxid++;
 			}
-			$seqIDmap{$seqID}=$taxIDmap{$lineage}{'own'}; #each seqID, the last taxid (before the ++) is the one to remember; no possible duplicated seqid at this point           
-		}	
+			$prev_lineage = $lineage;		
+			$seqIDmap{$seqID}=$taxIDmap{$lineage}{'own'}; #each seqID, the last taxid (before the ++) is the one to remember; no possible duplicated seqid at this point           			
+		}		
 	}
-	return(\%taxIDmap,\%seqIDmap,$taxid); #lasttaxid
+	return(\%taxIDmap,\%seqIDmap,$taxid); #lasttaxid+1 returned => will be the first seqID
 }
 
 #----------------------------------------------------------------------------
 # Print files now
-# print_tri($taxIDmap,$indexmap,$out);
+# print_tri_key_idx($taxIDmap,$indexmap,$out);
 #----------------------------------------------------------------------------
-sub print_tri {
-	my ($taxIDmap,$indexmap,$out) = @_;	
+sub print_tri_key_idx {
+	my ($taxIDmap,$indexmap,$out) = @_;
 	my $key = $out."_key.txt";
 	my $idx = $out."_index.txt";	
 	my %trimap = ();
-	open(my $keyfh, ">", $key) or confess "ERROR (sub print_tri): could not open to write $key $!\n";
+	open(my $keyfh, ">", $key) or confess "ERROR (sub print_tri_key_idx): could not open to write $key $!\n";
 	print $keyfh "#taxID\tparent_taxID\trank\tlineage_string\n";
-	open(my $idxfh, ">", $idx) or confess "ERROR (sub print_tri): could not open to write $idx $!\n";
-	foreach my $lineage (sort keys %{$taxIDmap}) {
+	open(my $idxfh, ">", $idx) or confess "ERROR (sub print_tri_key_idx): could not open to write $idx $!\n";
+	LIN: foreach my $lineage (sort keys %{$taxIDmap}) {
+		next LIN unless ($lineage);
 		#NB: tri does not need to be sorted, but that's 'prettier'
 		$trimap{$taxIDmap->{$lineage}{'own'}}=$taxIDmap->{$lineage}{'parent'};
 		my ($rank,$label) = ($indexmap->{$lineage}{'rank'},$indexmap->{$lineage}{'label'});
@@ -307,7 +322,7 @@ sub print_tri {
 	
 	#print a sorted tri
 	my $tri = $out.".tri";
-	open(my $trifh, ">", $tri) or confess "ERROR (sub print_tri): could not open to write $tri $!\n";
+	open(my $trifh, ">", $tri) or confess "ERROR (sub print_tri_key_idx): could not open to write $tri $!\n";
 	foreach my $child (sort {$a<=>$b} keys %trimap) {
 		print $trifh ">$child\n$trimap{$child}\n";
 	}
@@ -317,18 +332,17 @@ sub print_tri {
 
 #----------------------------------------------------------------------------
 # sti stuff now
-# fasta_and_sti($fasta,$seqIDmap,$taxonomy,$out,$counts,$uc);
+# print_fasta_sti_tgs($fasta,$seqIDmap,$taxonomy,$out,$counts,$uc);
 #----------------------------------------------------------------------------
-sub fasta_and_sti {
-	my ($fa,$seqIDmap,$taxonomy,$out,$taxid,$uc) = @_;
-	#$taxid+=1;
+sub print_fasta_sti_tgs {
+	my ($fa,$seqIDmap,$taxonomy,$out,$seqid_int,$uc) = @_;
 	my $sti = $out.".sti";
-	$out = $out."_taxonomer.fa";
+	$out = $out."_taxonomer.fa";	
 	my $skip;
 	my %check = ();
-	open(my $fh, "<", $fa) or confess "ERROR (sub fasta_and_sti): could not open to read $fa $!\n";
-	open(my $stifh, ">", $sti) or confess "ERROR (sub fasta_and_sti): could not open to write $sti $!\n";
-	open(my $fafh, ">", $out) or confess "ERROR (sub fasta_and_sti): could not open to write $out $!\n";
+	open(my $fh, "<", $fa) or confess "ERROR (sub print_fasta_sti_tgs): could not open to read $fa $!\n";
+	open(my $stifh, ">", $sti) or confess "ERROR (sub print_fasta_sti_tgs): could not open to write $sti $!\n";
+	open(my $fafh, ">", $out) or confess "ERROR (sub print_fasta_sti_tgs): could not open to write $out $!\n";
 	LINE: while(<$fh>) {
 		chomp (my $line = $_);
 		if (substr($line,0,1) eq ">") {
@@ -343,12 +357,12 @@ sub fasta_and_sti {
 			if ((! $lin) || ($lin eq "nd") || ($check{$seqid})){
 				$skip = 1;
 			} else {	
-				my $lineage = join(";",@{$taxonomy->{$seqid}});
-				print $fafh ">$taxid\t$seqid\t$lineage\t$desc\n";
-				print $stifh ">$taxid\n$seqIDmap->{$seqid}\n";
+				my $lineage = join("$sep",@{$taxonomy->{$seqid}});
+				print $fafh ">$seqid_int\t$seqid\t$lineage\t$desc\n";
+				print $stifh ">$seqid_int\n$seqIDmap->{$seqid}\n";
 				$check{$seqid}=1;
 				$skip = 0;
-				$taxid++;
+				$seqid_int++;
 			}
 		} else {
 			if ($uc) {
