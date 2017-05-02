@@ -1,4 +1,4 @@
-#taxonomer
+### taxonomer
 =========
 
 __Want to do get up and running with taxonomer quickly?  Go to [taxonomer.iobio.io](http://taxonomer.iobio.io)__
