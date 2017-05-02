@@ -1,11 +1,11 @@
-### taxonomer
+# Taxonomer
 =========
 
 __Want to do get up and running with taxonomer quickly?  Go to [taxonomer.iobio.io](http://taxonomer.iobio.io)__
 
-##metagenomics toolkit 
+## metagenomics toolkit 
 
-###Building the code:
+### Building the code:
 
 This repository is written in c and python, with cython bringing the two together.  
 
@@ -21,7 +21,7 @@ To build, cd into taxonomer/ -- directory where all the code lives, type the fol
 2. `rm scripts/cython/*.c`
 3. `python setup.py build_ext --inplace`
 
-####Building a nucleotide database:
+#### Building a nucleotide database:
 
 To build a database, you must use kanalyze to create the kmer file. You do this with kanalyze, which
 is available here: http://sourceforge.net/projects/kanalyze/files/
@@ -35,7 +35,7 @@ Then use build_db.py to construct the database for classification
 
 To see help, use python build_db.py -h
 
-####Building a protein database:
+#### Building a protein database:
 
 To build a protein database, you must follow these steps:
 
@@ -44,12 +44,12 @@ To build a protein database, you must follow these steps:
   `java -jar kanalyze.jar count -k 30 -d 3 -l 3 -o \<output file\> -m hex -f fasta \<input fasta\>`
 3.  Use python build_db.py, but specify --protein 1 to build protein database
 
-####Classifying reads
+#### Classifying reads
 
 Use classify_reads.py to classify reads.  use -h argument to see command line options.  
 NOTE -- only use --protein 1 if you have already built a database for protein classification.
 
-####Binner database construction
+#### Binner database construction
 
 We have empirically found binning using k-mers of 21bp in length to be effective for our research applications.  This may or may not be the optimal size for your application, but the commands that follow demonstrate how to construct a binner database using 21bp k-mers.  
 
@@ -88,7 +88,7 @@ We have empirically found binning using k-mers of 21bp in length to be effective
 
 Where example_binner_db is the prefix for the output files that enable running the binner.  fake.sti and fake.fasta are placeholders and are in the scripts/ folder.  They can be used in any binner database build.  
 
-####Creating taxonomic relationship files
+#### Creating taxonomic relationship files
 
 Both building databases and classifying sequences requires knowlege about the taxonomic relationships between the organisms in the database.  __Taxonomer uses two files for this purpose, they have extensions .sti and .tri.__  
 
