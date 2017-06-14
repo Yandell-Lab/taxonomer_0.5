@@ -23,17 +23,21 @@ To build, cd into taxonomer/ -- directory where all the code lives, type the fol
 
 #### Building a nucleotide database:
 
-To build a database, you must use kanalyze to create the kmer file. You do this with kanalyze, which
-is available here: http://sourceforge.net/projects/kanalyze/files/
 Note that Taxonomer will ignore kmers with sequences in lower case
 
-The following is a command line example of kanalyze with the necessary paramaters (-k is the kmer size):      
+To build a database, you must create the kmer counts file with kanalyze v0.9.7, which
+is available [here](https://sourceforge.net/projects/kanalyze/files/v0.9.7/)
+
+The following is a command line example of kanalyze with the necessary paramaters (-k is the kmer size, -l and -d control the threading):      
   
 `java -jar kanalyze.jar count -k 31 -d 3 -l 3 -o \<output file\> -m hex -rcanonical -f fasta \<input fasta\>`
 
-Then use build_db.py to construct the database for classification
+Then use build_db.py to construct the database for classification (to see help, use python build_db.py -h):
 
-To see help, use python build_db.py -h
+`build_db.py <db_prefix> <kanalyze_output> <db_prefix.sti> <db_prefix.fa> -kl <kmer_length>`
+
+The fasta file needs to have sequence IDs as integer that match the numbers in the sti file. See below ("Creating taxonomic relationship files") for details about the sti and tri files. You may also use the script Utils/taxo_prep_classifier_db.pl on a fasta file with lineages in the description (see the script usage) to create them automatically from a fasta file.
+
 
 #### Building a protein database:
 
