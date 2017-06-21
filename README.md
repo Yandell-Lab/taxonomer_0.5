@@ -38,6 +38,10 @@ Then use build_db.py to construct the database for classification (to see help, 
 
 The fasta file needs to have sequence IDs as integer that match the numbers in the sti file. See below ("Creating taxonomic relationship files") for details about the sti and tri files. You may also use the script Utils/taxo_prep_classifier_db.pl on a fasta file with lineages in the description (see the script usage) to create them automatically from a fasta file.
 
+Note that a random reference will be selected - if knowing the exact reference matters, consider asigning a taxid to each reference.
+
+To parse the output of the classifier with a custom database, you may use the Util script taxo_parse_classifier_v05.pl
+
 
 #### Building a protein database:
 
