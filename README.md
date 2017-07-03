@@ -15,6 +15,9 @@ python dependencies -- we HIGHLY recommend using the anaconda distribution of py
 2. cython
 3. biopython
 
+system dependency:
+1. openmp compatible C compiler
+
 To build, cd into taxonomer/ -- directory where all the code lives, type the following commands:
 
 1. `rm scripts/cython/*.so`
