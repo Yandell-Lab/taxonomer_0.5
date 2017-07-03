@@ -1,7 +1,7 @@
 # Taxonomer
 =========
 
-__Want to do get up and running with taxonomer quickly?  Go to [taxonomer.iobio.io](http://taxonomer.iobio.io)__
+__Want to do get up and running with taxonomer quickly?  Go to [taxonomer.com](http://www.taxonomer.com)__
 
 ## metagenomics toolkit 
 
