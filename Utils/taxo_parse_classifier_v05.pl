@@ -8,26 +8,38 @@ use warnings;
 use strict;
 use Carp;
 use Getopt::Long;
-use Data::Dumper;
+#use Data::Dumper;
 
-my $version = "1.0";
+my $version = "1.4";
 my $scriptname = "taxo_parse_classifier_v05.pl";
 my $changelog = "
 #	- v1.0 = 19-21 Jun 2017
 #            Version of the parser for taxonomer_0.5 classifier & custom databases 
+#	- v1.1 = 22 Jun 2017
+#            taxid output was missing the taxid and only had the lineage
+#	- v1.2 = 23 Jun 2017
+#            --agg option
+#	- v1.3 = 07 Aug 2017
+#            fix --agg option... matrix was not initialized with 0s
+#	- v1.4 = 09 Aug 2017
+#            Add option --ties in mandatory; rename the filter that was named -t to -u
+#              => fix count of classified sequences for --ties 1
+#                 if --ties 0 then ties have to be skipped for refid output
+#            Deal with fulltaxID => lineage as taxid in the output
 \n";
 
 my $usage = "\nUsage [v$version]: 
     perl $scriptname 
-             -i <classifier_output> [-f <file.fa>] [-k <db_key.txt>] [-n] 
-             [-d] [-p <X>] [-b] [-o <X>] [-t <X>] [-s <X>] [-v] [-h] [-l]
+             -i <classifier_output> [-d] [-f <file.fa>] [-k <db_key.txt>] 
+             [-n] [-a] [-p <X>] [-b] [-o <X>] [-t <X>] [-s <X>] [-v] [-h] [-l]
 			
     PURPOSE:
     Parser for taxonomer outputs (custom databases only), GitHub version of the tool.
     It outputs read counts for each taxid, and each reference if the database fasta file 
-    is provided (for this output, when reads are tied to several reference sequences,
-    the counts are divided by the number of ties for each reference). See the usage for
-    filtering and normalization.
+    is provided. Note that for this output, when reads are tied to several reference sequences
+    and taxonomer was run with --ties 1, the counts are divided by the number of ties 
+    for each reference. However, if --ties 0 was used then only the taxid output is reliable.
+    See the usage for filtering and normalization.
 
     To concatenate existing parsed outputs, use the -b option. Besides -i, other 
     mandatory arguments become non mandatory with this option. The -n option can 
@@ -41,17 +53,27 @@ my $usage = "\nUsage [v$version]:
                               or if -d is set, -in can designate a directory that contains the files to parse 
                               (do not put other files than the ones to parse in it)
                               To get a matrix, use -p           
+     -t,--ties    => (INT)    Same as when classify_reads.py was run; if --ties 1, then there is one line
+                              per tied reference; with --ties 0 there is one line per read.
+     -m,--map     => (STRING) Provide the sti file (.sti), which allows to get the parent taxid of each 
+                              refname (also needed to get the lineage in the refname and aggrname outputs
                                                             
     OPTIONAL ARGUMENTS:
      BEHAVIOR
      -f,--fa      => (STRING) To get counts at the reference ID level, set -f with the fasta file
                               used to build the database (it has the correspondance between seqID 
-                              and reference name in its headers)
+                              and reference name in its headers). Also required for -a and -n.
      -k,--key     => (STRING) To get the lineages and not the taxids in the taxid output,
                               load the key file (_key.txt) from the taxo_prep_classifier.pl script             
      -n,--norm    => (BOOL)   To normalize counts for each reference by ref length (requires -f)
                               and by total amount of classified reads of each sample for all outputs
                               Also x 10e9 for readability -> formula of RPKM (Mortazavi 2008)
+     -a,--agg     => (BOOL)   To aggregate the refname counts to the NAME part of the header, 
+                              if it is formmated as: >NAME__details    [description]
+                              This is done once the numbers for the refname output are obtained,
+                              in order to have proper normalization (since all copies of a 'NAME' 
+                              are of different length). It will work with -b, but not if -n is set as well.
+                              The fasta file (set with -f) is also required.
    
      IF SEVERAL INPUT FILES        
      -d,--dir     => (BOOL)   Set if -i is a directory and not a file or a list of file
@@ -60,7 +82,7 @@ my $usage = "\nUsage [v$version]:
                               for each file will be in different columns.
                               Set the min. % of samples that should have > 0 read count
                               to a reference (for it to be kept in the concatenated output);
-                              use -p 0 to keep all references
+                              use -p 0 to keep all reference sequences.
      -b,--before  => (BOOL)   To load existing parsed outputs. Use with -d only.
                               Make sure to set a different -o if you wish to keep 
                               a previous concatenated file
@@ -68,8 +90,8 @@ my $usage = "\nUsage [v$version]:
                               [irrelevant otherwise]
 
      FOR FILTERING
-     -t,--tie     => (INT)    To skip sequences that have more than (>) X ties
-                              Typically: -t 10
+     -u,--uniq    => (INT)    To skip sequences that have more than (>) X ties
+                              Typically: -u 10
      -s,--score   => (INT)    To skip sequences that have a max score lower than (<) the value X
                               Typically: -s 40                          
                                    
@@ -83,16 +105,22 @@ my $usage = "\nUsage [v$version]:
 #-----------------------------------------------------------------------------
 #--------------------------- CHECK & VERBOSE ---------------------------------
 #-----------------------------------------------------------------------------
-my ($in,$d,$key,$fa,$norm,$cat,$before,$outname,$tied,$score,$help,$chlog,$v);
+my ($in,$ties);
+my ($d,$key,$sti,$fa,$norm,$agg,$cat,$before,$outname);
+my ($tied,$score);
+my ($help,$chlog,$v);
 GetOptions ('in=s'      => \$in, 
+            'ties=s'    => \$ties, 
             'key=s'     => \$key,
+            'map=s'     => \$sti,
             'fa=s'      => \$fa,
             'norm'      => \$norm,
+            'agg'       => \$agg,
             'dir'       => \$d, 
             'pool=s'    => \$cat,
             'before'    => \$before, 
             'out=s'     => \$outname, 
-            'tie=s'     => \$tied, 
+            'uniq=s'    => \$tied, 
             'score=s'   => \$score, 
             'log'       => \$chlog, 
             'help'      => \$help, 
@@ -116,6 +144,10 @@ input_files();
 my %map = ();
 load_key() unless ($before);
 
+#load the sti file to get the parent of a reference
+my %sti = ();
+load_sti();
+
 #Load the headers
 my %rfinfo = ();
 load_fa() unless (! $fa);
@@ -125,23 +157,23 @@ my %totals = ();
 init_totals() unless ($before && ! $norm);
 my %cat_tx = ();
 my %cat_ref = ();
-my %taxids = ();
+my %cat_agg = ();
 my %allkeys = ();
-my $txheader = "classified_taxid";
-$txheader = $txheader."\tlineage" if ($key);
-my $rfheader = "ref_id\tref_name\tref_len\tref_desc\tclassified_taxid_(may-not-be-this-ref-parent-if-ties)";
-$rfheader = $rfheader."\tlineage" if ($key);
+my ($txheader,$rfheader,$rnheader);
+set_headers();
 print STDERR " --- Parsing input file(s):\n" if (! $before && $v);
 print STDERR " --- Loading previous output files:\n" if ($before && $v);
 for my $file (@listin) {
 	if ($before) {
 		load_parsed($file,"taxid") if ($file =~ /taxid/);
 		load_parsed($file,"refname") if ($file =~ /refname/ && $fa);
+		load_parsed($file,"aggrname") if ($file =~ /aggrname/ && $fa); #this is why having the 3 options -d -n -a is not okay
 	} else {
 		my ($counts,$refcounts) = parse_taxo($file); #keys are the integer IDs
 		#Now print & load concat stuff
 		print_parsed($file,"taxid",$counts,$txheader);
-		print_parsed($file,"refname",$refcounts,$rfheader) if ($fa);
+		my $rncounts = print_parsed($file,"refname",$refcounts,$rfheader) if ($fa);
+		print_parsed($file,"aggrname",$rncounts,$rnheader) if ($fa && $agg);
 	}	
 }
 
@@ -150,9 +182,11 @@ if (defined $cat) {
 	fill_zeros_cat();
 	print STDERR " --- Printing concatenated output for all samples\n" if ($v);
 	print_cat("taxid",\%cat_tx,$txheader);
-	print STDERR "     -> $outname.CAT.taxid.tab\n" if ($v);	
+	print STDERR "     -> $outname.CAT.taxid.tab\n" if ($v);
 	print_cat("refname",\%cat_ref,$rfheader) if ($fa);
-	print STDERR "     -> $outname.CAT.refname.tab\n" if ($fa && $v);	
+	print STDERR "     -> $outname.CAT.refname.tab\n" if ($fa && $v);
+	print_cat("aggrname",\%cat_agg,$rnheader) if ($fa && $agg);
+	print STDERR "     -> $outname.CAT.aggrname.tab\n" if ($fa && $agg && $v);
 }
 
 #Now print summary
@@ -176,9 +210,9 @@ sub input_files {
 		NAME: foreach my $name (@namelist) {
 			chomp($name);
 			$name = "$path/$name";
-			if ($name =~ /taxid\.tab$/ || $name =~ /refname\.tab$/) {
+			if ($name =~ /(taxid|refname|aggrname)\.tab$/) {
 				`rm -Rf $name` if (! $before);
-				push(@listin,$name) if ($before);
+				push(@listin,$name) if ($before && $name !~ /summary\.tab$/);
 				next NAME; 
 			}
 			push(@listin,$name) if (! $before);
@@ -212,12 +246,30 @@ sub input_files {
 sub load_key {
 	print STDERR " --- Loading correspondance: lineages <=> TaxIDs from $key\n" if ($v);
 	open(my $fh, "<", $key) or confess "     \nERROR (sub load_key): could not open to read $key $!\n";
-	my $taxid;
 	LINE: while(<$fh>) {
 		chomp (my $l = $_);
 		next LINE if ($l !~ /\w/);
 		my ($tx, $parent, $rank, $lineage) = split(/\s+/,$l);
 		$map{$tx} = $lineage;
+	}
+	close ($fh);
+	return;
+}
+
+#----------------------------------------------------------------------------
+sub load_sti {
+	print STDERR " --- Loading correspondance: seqid <=> TaxIDs from $sti\n" if ($v);
+	my $child;
+	open(my $fh, "<", $sti) or confess "     \nERROR (sub load_sti): could not open to read $sti $!\n";
+	LINE: while(<$fh>){
+		chomp(my $l = $_);
+		next LINE if ($l !~ /\w/);		
+		if (substr($l,0,1) eq ">") {
+			$child = $l;
+			$child =~ s/^>//;
+		} else {		
+			$sti{$child}=$l;
+		}
 	}
 	close ($fh);
 	return;
@@ -271,6 +323,23 @@ sub init_totals {
 }
 
 #----------------------------------------------------------------------------
+sub set_headers {
+	$txheader = "classified_taxid";
+	$rfheader = "ref_id\tref_name\tref_len\tref_desc\ttaxid";
+	$rnheader = "ref_name_aggregated";
+	if ($key) {
+		if ($sti =~ /fullTaxID/) {
+			$txheader = "lineage"; #not one taxid per lineage in that case
+		} else {
+			$txheader = $txheader."\tlineage";
+		}
+		$rfheader = $rfheader."\tlineage";
+		$rnheader = $rnheader."\tlineage";
+	}
+	return;
+}
+
+#----------------------------------------------------------------------------
 sub load_parsed {
 	my $file = shift;
 	my $type = shift;
@@ -281,11 +350,12 @@ sub load_parsed {
 		next LINE if ($line !~ /\w/ || substr($line,0,1) eq "#");			
 		my @l = split(/\t/,$line);
 		my $c = pop @l;
-		my $key = join("\t",@l);
-		$cat_tx{$key}{$file} = $c if ($type eq "taxid");
-		$cat_ref{$key}{$file} = $c if ($type eq "refname");
+		my $k = join("\t",@l);
+		$cat_tx{$k}{$file} = $c if ($type eq "taxid");
+		$cat_ref{$k}{$file} = $c if ($type eq "refname");
+		$cat_agg{$k}{$file} = $c if ($type eq "aggrname");
 		#Save all keys
-		$allkeys{$type}{$key}++;
+		$allkeys{$type}{$k}++;
 		#Count totals if needed
 		$totals{$file}{'c'}+=$c if ($norm);
 	}
@@ -298,8 +368,6 @@ sub parse_taxo {
 	my $file = shift;
 	my %counts = ();
 	my %refcounts = ();
-	my %check_parent = ();
-	my %check_merged = ();
 	print STDERR "      - $file\n" if ($v);
 	open(my $in_fh, "<", $file) or confess "     \nERROR (sub load_taxo): could not open to read $file $!\n";	
 ##CLASSIFIER OUTPUT (COMMAND LINE):
@@ -309,25 +377,37 @@ sub parse_taxo {
 		chomp (my $line = $_);
 		next LINE if ($line !~ /\w/);			
 		#load values
-		my ($class,$query,$taxid,$ref,$depth,$ties,$maxsc,$avgsc,$rlen,$kc) = split(/\t/,$line);
+		my ($class,$query,$taxid,$ref,$depth,$nt,$maxsc,$avgsc,$rlen,$kc) = split(/\t/,$line);
 		if ($class eq "U") { 
 			$totals{$file}{'u'}++;
 			next LINE;
+		}
+		#OK, now classified stuff:
+		if ($ties) {
+			$totals{$file}{'c'}+= 1/$nt;
 		} else {
 			$totals{$file}{'c'}++;
 		}
 		#filter if relevant
 		next LINE if ($score && $maxsc < $score);
-		next LINE if ($tied && $ties > $tied);			
-		#went through filters => count for each taxID
-		$totals{$file}{'p'}++;
-		my $key = $taxid;
-		$key = $map{$key} if ($key);
-		$counts{$key}+=1/$ties;
-		
-		#count for references now - normalize if tied
-		$refcounts{$ref}+=1/$ties;
-		$taxids{$ref}=$taxid;
+		next LINE if ($tied && $nt > $tied);
+		#went through filters => count reads + by taxid and refid
+		my $k = $taxid;
+		#Now get the lineage corresponding to that taxID
+		$k = $map{$k} if ($key && $sti =~ /fullTaxID/);
+		if ($ties) {
+			#normalize if tied since one line per tie
+			$totals{$file}{'p'}+= 1/$nt;
+			$counts{$k}+=1/$nt; #counts per taxids
+			$refcounts{$ref}+=1/$nt; #counts per refids
+		} else {
+			$totals{$file}{'p'}++;
+			$counts{$k}++;
+			if ($nt == 1) {
+				#then the refid is OK
+				$refcounts{$ref}+=1/$nt;
+			}
+		}
 	}
 	close ($in_fh);
 	$totals{$file}{'tot'} = $totals{$file}{'c'} + $totals{$file}{'u'};
@@ -340,6 +420,7 @@ sub print_parsed {
 	my $type = shift;
 	my $counts = shift;
 	my $header = shift;
+	my %rncounts = ();
 	my $out = $file;
 	$out =~ s/\.out$//;
 	$out = $out.".".$type.".tab";
@@ -348,29 +429,60 @@ sub print_parsed {
 	print $fh "#$header\tread_count";
 	print $fh "_normalized" if ($norm);
 	print $fh "\n";
-	foreach my $key (keys %{$counts}) {
-		my $c = $counts->{$key};
+	foreach my $k (keys %{$counts}) {
+		my $c = $counts->{$k};
 		$c=$c/$totals{$file}{'c'} if ($norm); #normalize if asked
 		my $fullkey;
-		if ($type eq "taxid") {
-			$fullkey = $key; #= lineage if $key
-		} else {
-			my $name = $rfinfo{$key}{'id'};
-			my $len = "nd";
-			$len = $rfinfo{$name}{'ln'} if ($rfinfo{$name}{'ln'});
-			$c = $c/$len*10e9 if ($norm);
-			$fullkey = "$key\t$name\t$len\t$rfinfo{$key}{'dc'}\t$taxids{$key}";
-			$fullkey = $fullkey."\t".$map{$taxids{$key}} if ($key);
-		}
-		print $fh "$fullkey\t$c\n";
+		($fullkey,$c) = get_fullkey_counts($k,$type,$c);	
 		#for cat - save all + initialize all keys
 		$allkeys{$type}{$fullkey}++ if (defined $cat);
 		$cat_tx{$fullkey}{$file} = $c if (defined $cat && $type eq "taxid");
 		$cat_ref{$fullkey}{$file} = $c if (defined $cat && $type eq "refname");
+		$cat_agg{$fullkey}{$file} = $c if (defined $cat && $type eq "aggrname");
+		print $fh "$fullkey\t$c\n";
+		#for --agg, if parsing the refname right now:
+		if ($agg && $type eq "refname") {
+			my ($name,$details) = split("__",$rfinfo{$k}{'id'});
+			$rncounts{$name}+=$c;
+			#add Rnames to the key hash => store lineages
+			my $tx = $sti{$k};
+			my $lin = $map{$tx};
+			$map{$name} = $lin if (! $map{$name});
+		}
 	}	
 	close $fh;
-	return ;
+	return \%rncounts;
 }
+
+#----------------------------------------------------------------------------
+sub get_fullkey_counts {
+	my $k = shift;
+	my $type = shift;
+	my $c = shift;
+	my $fullkey = "";
+	if ($type eq "taxid") {
+		$fullkey = $k;
+		$fullkey = $fullkey."\t".$map{$k} if ($key && $sti !~ /fullTaxID/);
+	} elsif ($type eq "refname") {
+		my $name = $rfinfo{$k}{'id'};
+		my $len = "nd";
+		$len = $rfinfo{$name}{'ln'} if ($rfinfo{$name}{'ln'});
+		$c = $c/$len*10e9 if ($norm);
+		my $tx = $sti{$k};
+		my $desc = $rfinfo{$k}{'dc'};
+		#clean up the description with the lineage if it is in it
+		if ($key) {
+			my $lineage = $map{$tx};
+			$desc =~ s/$lineage\s//;
+		}
+		$fullkey = "$k\t$name\t$len\t$desc\t$tx";
+		$fullkey = $fullkey."\t".$map{$tx} if ($key);
+	} elsif ($type eq "aggrname") {
+		$fullkey = $k;
+		$fullkey = $fullkey."\t".$map{$k} if $map{$k};
+	}
+	return($fullkey,$c);
+}	
 
 #----------------------------------------------------------------------------
 sub fill_zeros_cat {
@@ -380,8 +492,10 @@ sub fill_zeros_cat {
 			foreach my $fullkey (keys %{$allkeys{$type}}) {
 				if ($type eq "taxid") {				
 					$cat_tx{$fullkey}{$file}=0 unless ($cat_tx{$fullkey}{$file});
-				} else {
+				} elsif ($type eq "refname") {
 					$cat_ref{$fullkey}{$file}=0 unless ($cat_ref{$fullkey}{$file});
+				} else {	
+					$cat_agg{$fullkey}{$file}=0 unless ($cat_agg{$fullkey}{$file});
 				}
 			}
 		}
@@ -400,8 +514,8 @@ sub print_cat {
 
 	open(my $fh, ">", $out) or confess "     \nERROR (sub print_cat): could not open to write $out $!\n";
 	print $fh "$header";
-	KEYS: foreach my $key (keys %{$all}) {
-		foreach my $file (sort keys %{$all->{$key}}) {
+	KEYS: foreach my $k (keys %{$all}) {
+		foreach my $file (sort keys %{$all->{$k}}) {
 			my $filename = filename($file);
 			$filename =~ s/\.$type\.tab$// if ($before);
 			print $fh "\t$filename";
@@ -423,8 +537,8 @@ sub print_cat {
 			$c = $all->{$fullkey}{$file} if ($all->{$fullkey}{$file});	
 			if ($before && $norm) {	#divide the counts if needed, for refs only
 				$c = $c/$totals{$file}{'c'};
-				my ($key,$stuff)=split(/\t/,$fullkey) unless ($type eq "taxid");
-				$c = $c/$rfinfo{$key}{'id'}*10e9 unless ($type eq "taxid");
+				my ($k,$stuff)=split(/\t/,$fullkey) unless ($type eq "taxid");
+				$c = $c/$rfinfo{$k}{'id'}*10e9 unless ($type eq "taxid");
 			}
 			print $fh "\t$c";
 		}
@@ -467,11 +581,15 @@ sub check_options {
 	die $usage if ($help);
 	die "\n Please provide input file (-i, use -h to see the usage)\n\n" if (! $in);
 	die "\n -i $in does not exist?\n\n" if ($in !~ /,/ && ! -e $in);
+	die "\n Please set --ties to 0 or 1 (use -h to see the usage)\n\n" if (! $ties || $ties !~ /^(0|1)$/);
+	die "\n Please provide sti file (-m, use -h to see the usage)\n\n" if (! $sti);
+	die "\n -m $sti does not exist?\n\n" if (! -e $sti);
 	die "\n -k $key does not exist?\n\n" if (! $before && $key && ! -e $key);
 	die "\n -f $fa does not exist?\n\n" if (! $before && $fa && ! -e $fa);
 	die "\n -b is set but -d is not - please check usage\n\n" if ($before && ! $d);
 	die "\n -b is set but -p is not - please check usage\n\n" if ($before && ! defined $cat);
 	die "\n -n is set but -f is not - please check usage\n\n" if ($norm && ! $fa);
+	die "\n -a is set but -f is not - please check usage\n\n" if ($agg && ! $fa);
 	$in = $1 if ($in =~ /^(.*)\/$/);
 	return;
 }
@@ -481,15 +599,24 @@ sub print_log {
 	print STDERR "\n --- $scriptname started (v$version), with:\n";
 	print STDERR "       Input files are located in $in\n" if ($d);
 	print STDERR "       --in  => $in\n" if (! $d);
+	print STDERR "             -> classsify_reads.py was run with --ties "; 
+	print STDERR "1\n" if ($ties);
+	print STDERR "0\n" if (! $ties);
 	print STDERR "             -> previous output files in $in will be loaded\n" if ($d && $before);
 	print STDERR "             -> if there were any previous output files in $in, they will be deleted\n" if ($d && ! $before);
 	print STDERR "             -> outputs will be concatenated\n" if (defined $cat);
 	print STDERR "                in files with core name = $outname\n" if (defined $cat && $outname);
 	print STDERR "             -> references with less than $cat samples with classified reads will be skipped\n" if (defined $cat);
+	print STDERR "       --map [sti file] => $sti\n";
 	print STDERR "       --key => $key\n" if (! $before);
 	print STDERR "       --fa  => $fa\n" if (! $before && $fa);
 	print STDERR "             -> additional output for counts per reference\n" if (! $before && $fa);
 	print STDERR "       --norm => counts will be divided by reference length and total number of classified reads\n" if ($norm);
+	if ($agg && $before && $norm) {
+		print STDERR "       --agg is set, but so are -b and -n => ignored\n";
+		undef $agg;
+	}
+	print STDERR "       --agg  => counts will be aggreated to the NAME part of a refid formatted as NAME__DETAILS\n" if ($agg);
 	print STDERR "       Filtering options:\n";
 	print STDERR "         Threshold for number of ties is set to $tied, so if a sequence has a number\n" if ($tied && ! $before);
 	print STDERR "         of references tied for max read weight > $tied, classification is ignored\n" if ($tied && ! $before);
