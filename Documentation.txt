@@ -353,19 +353,21 @@ tail -n 2 t0.out.log
 
 
 #The t1.out.CAT.taxid.tab output looks like this:
-							#1 column per sample:
-	lineage						SRR073760.t1.out	SRR073761.t1.out	SRR073762.t1.out	SRR073772.t1.out	SRR073773.t1.out	SRR073777.t1.out
-	gencode;ENSG00000089006.16	437.503317987797	402.076620759865	359.728663225035	150.773532291238	173.574917178329	158.794426711161
-	gencode;ENSG00000175544.13	7.92146842927178	14.6241663127592	8.11720219613557	20.7266697349581	11.1811481002657	8.56801298147653
-	gencode;ENSG00000203865.9	52.7499999999999	48.5333333333333	45.1166666666666	25.5333333333333	29.8333333333334	23.7
-	gencode;ENSG00000239547.3	1.33333333333333	0					0					1.07692307692308	0.0769230769230769	0
-	gencode;ENSG00000276532.1	0.641322055137845	0.86575928551735	0.481203007518797	0.1036866359447		0.387666233834965	0.232247284878864
-	gencode;ENSG00000185133.13	5					4					5					87.4999999999997	134.999999999998	91.9999999999997
-	gencode;ENSG00000228839.5	0					0					2					0					0					0
+					#1 column per sample:
+	lineage                       SRR073760.t1.out   SRR073761.t1.out    SRR073762.t1.out    SRR073772.t1.out    SRR073773.t1.out	SRR073777.t1.out
+	gencode;ENSG00000089006.16    437.503    402.076     359.728     150.773     173.574     158.794
+	gencode;ENSG00000175544.13      7.921     14.624       8.117      20.726      11.181       8.568
+	gencode;ENSG00000203865.9      52.749     48.533      45.116      25.533      29.833      23.7
+	gencode;ENSG00000239547.3       1.333      0           0           1.076       0.076       0
+	gencode;ENSG00000276532.1       0.641      0.865       0.481       0.1036      0.387       0.232
+	gencode;ENSG00000185133.13      5          4           5          87.499     134.999      91.9999999999997
+	gencode;ENSG00000228839.5	0          0           2           0           0           0
 #there are decimals because the ties
 
 
-#These file (and the refname ones as well) can be loaded in R, for example as an input to DEseq2
+#These file (and the refname ones as well) can be loaded in R, 
+# -> for example as an input to DEseq2
+# -> or http://bioinformatics.sdstate.edu/idep/
 
 
 
