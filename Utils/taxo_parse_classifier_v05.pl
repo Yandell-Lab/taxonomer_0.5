@@ -10,7 +10,7 @@ use Carp;
 use Getopt::Long;
 #use Data::Dumper;
 
-my $version = "1.4";
+my $version = "1.5";
 my $scriptname = "taxo_parse_classifier_v05.pl";
 my $changelog = "
 #	- v1.0 = 19-21 Jun 2017
@@ -25,7 +25,9 @@ my $changelog = "
 #            Add option --ties in mandatory; rename the filter that was named -t to -u
 #              => fix count of classified sequences for --ties 1
 #                 if --ties 0 then ties have to be skipped for refid output
-#            Deal with fulltaxID => lineage as taxid in the output
+#            Deal with full tax IDs => lineage as taxid in the output
+#	- v1.5 = 13 Jan 2018
+#            Small bug fix and adapt with the new -a option from the prep script
 \n";
 
 my $usage = "\nUsage [v$version]: 
@@ -55,8 +57,10 @@ my $usage = "\nUsage [v$version]:
                               To get a matrix, use -p           
      -t,--ties    => (INT)    Same as when classify_reads.py was run; if --ties 1, then there is one line
                               per tied reference; with --ties 0 there is one line per read.
-     -m,--map     => (STRING) Provide the sti file (.sti), which allows to get the parent taxid of each 
-                              refname (also needed to get the lineage in the refname and aggrname outputs
+     -m,--map     => (STRING) Provide the root of the database .tri and .sti:
+                              if name.tri and name.sti, then use -m name
+                              This allows to get the parent taxid of each refname 
+                              (also needed to get the lineage in the refname and aggrname outputs)
                                                             
     OPTIONAL ARGUMENTS:
      BEHAVIOR
@@ -68,6 +72,7 @@ my $usage = "\nUsage [v$version]:
      -n,--norm    => (BOOL)   To normalize counts for each reference by ref length (requires -f)
                               and by total amount of classified reads of each sample for all outputs
                               Also x 10e9 for readability -> formula of RPKM (Mortazavi 2008)
+                              Note that the taxid output will be unchanged since reference length is needed
      -a,--agg     => (BOOL)   To aggregate the refname counts to the NAME part of the header, 
                               if it is formmated as: >NAME__details    [description]
                               This is done once the numbers for the refname output are obtained,
@@ -106,13 +111,13 @@ my $usage = "\nUsage [v$version]:
 #--------------------------- CHECK & VERBOSE ---------------------------------
 #-----------------------------------------------------------------------------
 my ($in,$ties);
-my ($d,$key,$sti,$fa,$norm,$agg,$cat,$before,$outname);
+my ($d,$key,$name,$fa,$norm,$agg,$cat,$before,$outname);
 my ($tied,$score);
 my ($help,$chlog,$v);
 GetOptions ('in=s'      => \$in, 
             'ties=s'    => \$ties, 
             'key=s'     => \$key,
-            'map=s'     => \$sti,
+            'map=s'     => \$name,
             'fa=s'      => \$fa,
             'norm'      => \$norm,
             'agg'       => \$agg,
@@ -142,11 +147,12 @@ input_files();
 
 #load the key file if any
 my %map = ();
-load_key() unless ($before);
+load_key() if ($key && ! $before);
 
-#load the sti file to get the parent of a reference
+#load the sti and tri files as one hash to get the parent of a reference
 my %sti = ();
-load_sti();
+my $FILE;
+load_sti_tri();
 
 #Load the headers
 my %rfinfo = ();
@@ -248,7 +254,7 @@ sub load_key {
 	open(my $fh, "<", $key) or confess "     \nERROR (sub load_key): could not open to read $key $!\n";
 	LINE: while(<$fh>) {
 		chomp (my $l = $_);
-		next LINE if ($l !~ /\w/);
+		next LINE if ($l !~ /\w/ || $l =~ /^#/);
 		my ($tx, $parent, $rank, $lineage) = split(/\s+/,$l);
 		$map{$tx} = $lineage;
 	}
@@ -257,12 +263,23 @@ sub load_key {
 }
 
 #----------------------------------------------------------------------------
-sub load_sti {
-	print STDERR " --- Loading correspondance: seqid <=> TaxIDs from $sti\n" if ($v);
-	my $child;
-	open(my $fh, "<", $sti) or confess "     \nERROR (sub load_sti): could not open to read $sti $!\n";
-	LINE: while(<$fh>){
-		chomp(my $l = $_);
+sub load_sti_tri {
+	my $child;	
+	#check first if sti contains any info or if it has id under itself
+	$FILE = $name.".sti";	
+	my @lines = `head -n 2 $FILE`;
+	my $ch = ($lines[0]);
+	my $pa = ($lines[1]);
+	$ch =~ s/^>//;
+	chomp($ch);
+	chomp($pa);
+	$FILE = $name.".tri" if ($ch == $pa);
+	print STDERR " --- Loading correspondance: seqid <=> TaxIDs from $FILE\n" if ($v);
+
+	#Now load - tri has all info if -a was used to prep the db files	
+	open(my $fh, "<", $FILE) or confess "     \nERROR (sub load_sti_tri): could not open to read $FILE $!\n";
+	LINE: while(defined(my $l = <$fh>)) {
+		chomp $l;
 		next LINE if ($l !~ /\w/);		
 		if (substr($l,0,1) eq ">") {
 			$child = $l;
@@ -328,7 +345,7 @@ sub set_headers {
 	$rfheader = "ref_id\tref_name\tref_len\tref_desc\ttaxid";
 	$rnheader = "ref_name_aggregated";
 	if ($key) {
-		if ($sti =~ /fullTaxID/) {
+		if ($FILE =~ /\.tri$/) {
 			$txheader = "lineage"; #not one taxid per lineage in that case
 		} else {
 			$txheader = $txheader."\tlineage";
@@ -393,8 +410,14 @@ sub parse_taxo {
 		next LINE if ($tied && $nt > $tied);
 		#went through filters => count reads + by taxid and refid
 		my $k = $taxid;
-		#Now get the lineage corresponding to that taxID
-		$k = $map{$k} if ($key && $sti =~ /fullTaxID/);
+		#Now get the lineage corresponding to that taxID if -k set		
+		if ($key) {
+			if ($map{$k}) {
+				$k = $map{$k};
+			} elsif ($map{$sti{$k}}) {
+				$k = $map{$sti{$k}};
+			}					
+		}
 		if ($ties) {
 			#normalize if tied since one line per tie
 			$totals{$file}{'p'}+= 1/$nt;
@@ -462,7 +485,7 @@ sub get_fullkey_counts {
 	my $fullkey = "";
 	if ($type eq "taxid") {
 		$fullkey = $k;
-		$fullkey = $fullkey."\t".$map{$k} if ($key && $sti !~ /fullTaxID/);
+		$fullkey = $fullkey."\t".$map{$k} if ($key && $map{$k});
 	} elsif ($type eq "refname") {
 		my $name = $rfinfo{$k}{'id'};
 		my $len = "nd";
@@ -581,9 +604,10 @@ sub check_options {
 	die $usage if ($help);
 	die "\n Please provide input file (-i, use -h to see the usage)\n\n" if (! $in);
 	die "\n -i $in does not exist?\n\n" if ($in !~ /,/ && ! -e $in);
-	die "\n Please set --ties to 0 or 1 (use -h to see the usage)\n\n" if (! $ties || $ties !~ /^(0|1)$/);
-	die "\n Please provide sti file (-m, use -h to see the usage)\n\n" if (! $sti);
-	die "\n -m $sti does not exist?\n\n" if (! -e $sti);
+	die "\n Please set --ties to 0 or 1 (use -h to see the usage)\n\n" if (! defined $ties || $ties !~ /^(0|1)$/);
+	die "\n -p is set but is not a float number?\n\n" if (defined $cat && $cat !~ /[\.0-9]+?/);
+	die "\n Please provide core name of sti and tri file (-m, use -h to see the usage)\n\n" if (! $name);
+	die "\n -m $name.sti or $name.tri do not exist?\n\n" if (! -e $name.".sti" || ! -e $name.".tri");
 	die "\n -k $key does not exist?\n\n" if (! $before && $key && ! -e $key);
 	die "\n -f $fa does not exist?\n\n" if (! $before && $fa && ! -e $fa);
 	die "\n -b is set but -d is not - please check usage\n\n" if ($before && ! $d);
@@ -607,8 +631,8 @@ sub print_log {
 	print STDERR "             -> outputs will be concatenated\n" if (defined $cat);
 	print STDERR "                in files with core name = $outname\n" if (defined $cat && $outname);
 	print STDERR "             -> references with less than $cat samples with classified reads will be skipped\n" if (defined $cat);
-	print STDERR "       --map [sti file] => $sti\n";
-	print STDERR "       --key => $key\n" if (! $before);
+	print STDERR "       --map [sti or tri file] => $name.sti or $name.tri\n";
+	print STDERR "       --key => $key\n" if ($key && ! $before);
 	print STDERR "       --fa  => $fa\n" if (! $before && $fa);
 	print STDERR "             -> additional output for counts per reference\n" if (! $before && $fa);
 	print STDERR "       --norm => counts will be divided by reference length and total number of classified reads\n" if ($norm);

@@ -1,0 +1,372 @@
+#-------------------------------------------------------------------------------
+# Taxonomer command lines template to use Taxonomer for differential expression
+
+# INCLUDES:
+# Command lines to prep database files, build database, classify reads, parse the output(s)
+#    (in NUCLEOTIDE space - see github main page for protein instructions)
+# Output descriptions
+
+#-------------------------------------------------------------------------------
+# Author:
+#	 Aurelie Kapusta (GitHub: 4ureliek)
+# Change log:
+#    v1.0 - 2018 01 14
+#-------------------------------------------------------------------------------
+
+# NOTE:
+# /home/username/ or its equivalent ~/
+#   it is typical path to applications and scripts
+# /data/username/projectname
+#   would be the working directory for the project
+
+
+#-------------------------------------------------------------------------------
+# Installing Taxonomer
+#-------------------------------------------------------------------------------
+# Don't forget to install anaconda, from https://www.continuum.io/downloads
+cd /home/username
+# OPTION 1: Using git clone:
+git clone git@github.com:Yandell-Lab/taxonomer_0.5.git
+cd /home/username/taxonomer_0.5/taxonomer
+/home/username/anaconda/bin/python setup.py build_ext --inplace
+# OPTION 2: download the zip from this webpage: 
+https://github.com/Yandell-Lab/taxonomer_0.5
+# green button -> download zip
+# then after unzipping (on your computer) and uploading on the server, same thing
+
+
+#-------------------------------------------------------------------------------
+# PREP DATABASE FILES
+#-------------------------------------------------------------------------------
+# Downloaded kanalyze-0.9.7-linux.tar.gz from https://sourceforge.net/projects/kanalyze/files/v0.9.7/
+# Note: the most recent version(2.0.0) does not work
+cd /home/username
+tar xvzf kanalyze-0.9.7-linux.tar.gz
+rm kanalyze-0.9.7-linux.tar.gz
+
+# Now onto the database:
+cd /data/username/projectname
+# Then to build the database with your sequences of choice - here, using kmer length of 21
+# You can use the script taxo_prep_classifier_db.pl (in the Utils)
+# This script requires that lineages are already in the sequence headers
+# You can use the script fasta_add_lineage_using_key.pl or add them with a search/replace
+# For example, for Gencode v27; # This file has 200401 sequences
+wget ftp://ftp.sanger.ac.uk/pub/gencode/Gencode_human/release_27/gencode.v27.transcripts.fa.gz
+gzip -d gencode.v27.transcripts.fa.gz
+# Headers are: >ENST00000456328.2|ENSG00000223972.5|OTTHUMG00000000961.2|OTTHUMT00000362751.1|DDX11L1-202|DDX11L1|1657|processed_transcript|
+# If we want a taxonomy where the transcripts are 'children' of a gene (like species are children of a genus),
+# we can achieve this by typing: 
+cat gencode.v27.transcripts.fa | sed 's/|/	gencode;/' | sed 's/|/	/' > gencode.v27.transcripts.lin.fa
+# NB: to get a tab in command line, sometimes you may need: ctrl+v+tab
+# NB: there needs to be at least one parental node for all, hich is why here "gencode" is added:
+# Header becomes: >ENST00000456328.2	gencode;ENSG00000223972.5	OTTHUMG00000000961.2|OTTHUMT00000362751.1|DDX11L1-202|DDX11L1|1657|processed_transcript|
+
+# Now, run the script to get the files required by Taxonomer. See all the options with:
+perl ~/taxonomer_0.5/Utils/taxo_prep_classifier_db.pl -h
+# Typically: 
+perl ~/taxonomer_0.5/Utils/taxo_prep_classifier_db.pl -f gencode.v27.transcripts.lin.fa -o g_v27 -w -u -a 
+# If all went well (-w gives warnings; you can use -t to test the lineages)
+# This created 4 files, here:
+	g_v27_index.txt    #similar as the key, but not full lineages. Columns are: taxID \t parent_taxID \t node_name
+	g_v27_key.txt      #contains a key of the taxIDs and all unique full lineages. Columns are: taxID \t parent_taxID \t rank \t lineage_string
+	g_v27.sti          #tree of the sequences (here transcripts) and which gene they belong to 
+	g_v27_taxonomer.fa #fasta with numerical fasta headers, required by taxonomer
+	g_v27.tri          #tree of the nodes in the lineages (here all genes are under the node "gencode", numbered 1
+#the use of the -a option 'forces' the tool to output the exact reference when there are ties (see below more details); otherwise a random sequence ID is written in the output, even with --ties 1
+
+
+#-------------------------------------------------------------------------------
+# BUILD DATABASE
+#-------------------------------------------------------------------------------
+# 1) Kanalyser - the options -d and -l set the cpus; no need to be high for small databases, it actually makes things go slower and allocate more memory for nothing
+# You may check the manual for more info about options to change the memory allocated:
+#	"General form:
+#	java -jar -Xmx2G kanalyze.jar <module> [<module arguments>]
+#	This allocates 2GB of RAM (-Xmx2G), which is required by the built-in modules. More memory can be allowed by increasing 2G."
+
+nohup time java -jar ~/kanalyze-0.9.7/kanalyze.jar count -k 21 -d 10 -l 10 -o g_v27.counts -m hex -rcanonical -f fasta g_v27_taxonomer.fa > g_v27.counts.log &
+# This creates the following files:
+	 1955756850 Jan 13 15:46 g_v27.counts
+			150 Jan 13 15:46 g_v27.counts.log
+# the .log should be empty besides the time:
+	391.83user 126.93system 3:20.62elapsed 258%CPU (0avgtext+0avgdata 15737248maxresident)k
+	37800inputs+6984096outputs (89major+47158minor)pagefaults 0swaps
+
+# Look at the usage for build_db.py:
+~/anaconda/bin/python ~/taxonomer_0.5/taxonomer/build_db.py -h
+# 	usage: build_db.py [-h] [-kl KL] [-binner] [-tc TAX_CUTOFF] [-kc KMER_CUTOFF]
+# 					   [--protein PROTEIN] [--afterburner AFTERBURNER]
+# 					   db_prefix kanalyze_input sti_file fasta_file
+# 
+# 	Build Taxonomer database for sequence classification
+# 
+# 	positional arguments:
+# 	  db_prefix             file name for database prefix
+# 	  kanalyze_input        kanalyze file of fasta reference
+# 	  sti_file              .sti file for sequence id / taxid relationships
+# 	  fasta_file            fasta reference file to be built
+# 
+# 	optional arguments:
+# 	  -h, --help            show this help message and exit
+# 	  -kl KL                kmer length (default=31)
+# 	  -binner               flag to build binner database
+# 	  -tc TAX_CUTOFF, --tax_cutoff TAX_CUTOFF
+# 							taxid cutoff (default=500)
+# 	  -kc KMER_CUTOFF, --kmer_cutoff KMER_CUTOFF
+# 							kmer cutoff (defulat=10000)
+# 	  --protein PROTEIN, -prot PROTEIN
+# 							1 = build db for protein searches   
+# 	  --afterburner AFTERBURNER, -aft AFTERBURNER
+# 							1=build db for afterburner searches
+
+# -kc X would skip kmers that are present more than X times in the database, since they are not very informative
+# Note that to build a protein database, the sequences have to first be converted to nucleotides, 
+#   using the script /home/username/taxonomer_0.5/taxonomer/scripts/convert_protein_db.py
+#   then the converted file is used as input for Kanalyze
+
+
+# Build db [in nucleotide space]:
+nohup time ~/anaconda/bin/python ~/taxonomer_0.5/taxonomer/build_db.py g_v27 g_v27.counts g_v27.sti g_v27_taxonomer.fa -kl 21 -tc 500 -kc 10000 > g_v27.build.log &
+
+# This creates the following files:
+		   6037 Jan 13 16:10 g_v27.build.log
+		6078696 Jan 13 15:47 g_v27.mi
+	 4523774736 Jan 13 16:10 g_v27.rsi
+	 3905682362 Jan 13 15:49 g_v27.tbi
+	 
+# With, at the end of the log file:
+	1203.93user 158.92system 22:46.06elapsed 99%CPU (0avgtext+0avgdata 8359068maxresident)k
+	4482992inputs+438890600outputs (27major+54968230minor)pagefaults 0swaps
+
+
+#-------------------------------------------------------------------------------
+# CLASSIFY [in nucleotide space]
+#-------------------------------------------------------------------------------
+# Then, to classify reads against this database, again let's check the usage
+/home/username/anaconda/bin/python /home/username/taxonomer_0.5/taxonomer/classify_reads.py -h
+	usage: classify_reads.py [-h] [-np NP] [-load_db] [--ties TIES]
+							 [--protein PROTEIN] [--afterburner AFTERBURNER]
+							 [--kmer_cutoff KMER_CUTOFF]
+							 db_prefix tri_file sti_file reads output
+
+	Classify fasta / fastq file of sequences
+
+	positional arguments:
+	  db_prefix             file name for database prefix
+	  tri_file              .tri file that gives taxid relationships
+	  sti_file              .sti file that gives taxid / seqid relationships
+	  reads                 fasta/fastq file of sequences to classify
+	  output                output file name
+
+	optional arguments:
+	  -h, --help            show this help message and exit
+	  -np NP                number of processors
+	  -load_db              set to false to turn off loading db into memory before
+							queries
+	  --ties TIES           1 = output ties, 0 = do not output ties (default=0)
+	  --protein PROTEIN, -prot PROTEIN
+							1 = classify in protein space, DB *MUST* be build for
+							this
+	  --afterburner AFTERBURNER, -aft AFTERBURNER
+							1=use afterburner search, DB *MUST* be built for this
+	  --kmer_cutoff KMER_CUTOFF
+							set kmer cutoff to change default database build
+							cutoff
+							
+# for example samples from:
+#    https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE25183
+#    => https://trace.ncbi.nlm.nih.gov/Traces/study/?acc=SRP004637
+# First, get the reads - can use sratoolkit (or aspera if set up)
+cd /data/username/projectname
+# Ex. 3 of the samples for cancer, these ones are contaminated
+nohup ~/sratoolkit.2.8.2-centos_linux64/bin/fastq-dump SRR073777 --gzip > SRR073777.log &
+nohup ~/sratoolkit.2.8.2-centos_linux64/bin/fastq-dump SRR073772 --gzip > SRR073772.log &
+nohup ~/sratoolkit.2.8.2-centos_linux64/bin/fastq-dump SRR073773 --gzip > SRR073773.log &
+# and then 3 controls, just for demo purposes
+nohup ~/sratoolkit.2.8.2-centos_linux64/bin/fastq-dump SRR073760 --gzip > SRR073760.log &
+nohup ~/sratoolkit.2.8.2-centos_linux64/bin/fastq-dump SRR073761 --gzip > SRR073761.log &
+nohup ~/sratoolkit.2.8.2-centos_linux64/bin/fastq-dump SRR073762 --gzip > SRR073762.log &
+
+# Now classify these samples, typically:
+cd /data/username/projectname
+nohup time /home/username/anaconda/bin/python /home/username/taxonomer_0.5/taxonomer/classify_reads.py g_v27 g_v27.tri g_v27.sti SRR073777.fastq.gz SRR073777.t1.out -np 10 --ties 1 --kmer_cutoff 10000 > SRR073777.t1.log &
+
+nohup time /home/username/anaconda/bin/python /home/username/taxonomer_0.5/taxonomer/classify_reads.py g_v27 g_v27.tri g_v27.sti SRR073777.fastq.gz SRR073777.t0.out -np 10 --ties 0 --kmer_cutoff 10000 > SRR073777.t0.log &
+
+#times for the 6 samples, --ties 0 and --ties 1:
+	grep "time to classify reads" *t0.log
+		SRR073760.t0.log:time to classify reads: 138.115566 #this is in seconds => 2.3 minutes for this one
+		SRR073761.t0.log:time to classify reads: 143.742079
+		SRR073762.t0.log:time to classify reads: 130.026686
+		SRR073772.t0.log:time to classify reads: 114.730802
+		SRR073773.t0.log:time to classify reads: 120.626531
+		SRR073777.t0.log:time to classify reads: 112.095159
+	grep "time to classify reads" *t1.log
+		SRR073760.t1.log:time to classify reads: 180.574471
+		SRR073761.t1.log:time to classify reads: 177.904471
+		SRR073762.t1.log:time to classify reads: 154.158945
+		SRR073772.t1.log:time to classify reads: 141.026388
+		SRR073773.t1.log:time to classify reads: 147.912480
+		SRR073777.t1.log:time to classify reads: 135.130820
+
+# In the output, unclassified reads look like this:
+# U  query_name
+U	SRR073777.1
+U	SRR073777.3
+
+# and classified ones like this:
+# For the --ties 0
+#C  query_name      taxid   refid  rank ties max_score  avg_score   query_len
+C	SRR073777.5		77875	77875	3	1	292.606201	292.606201	35
+C	SRR073777.32	1		244921	1	4	247.000824	226.919434	35
+C	SRR073777.35	5202	220947	2	2	269.979218	117.764610	35
+# The "ties" column means that a read can be classified as several reference sequences.
+# SRR073777.32 is tied between 4 transcripts, and because we used --ties 0, the last common parent is returned
+#    which here is 1, meaning that these transcripts belong to different genes (1 is the root)
+#    Note that this mean the reference ID is just one of the tied sequence. To get all ties, see the --ties 1 output.
+# SRR073777.32 is also tied, but this time between transcripts of the same gene (with the ID 5202).
+
+# For the --ties 1, the same 3 reads:
+#C  query_name  taxid   refid  rank ties max_score  avg_score   query_len
+C	SRR073777.5		77875	77875	3	1	292.606201	292.606201	35
+C	SRR073777.32	244921	244921	1	4	247.000824	226.919434	35
+C	SRR073777.32	244925	244925	1	4	247.000824	226.919434	35
+C	SRR073777.32	244930	244930	1	4	247.000824	226.919434	35
+C	SRR073777.32	244934	244934	1	4	247.000824	226.919434	35
+C	SRR073777.35	220947	220947	2	2	269.979218	117.764610	35 
+C	SRR073777.35	220948	220948	2	2	269.979218	117.764610	35
+# This time, because here we used --ties 1, there is one line per reference sequence in the output.
+# Note that the ties are set at the tri level (ties between references of the same taxid do not count).
+# This is why we used the -a option here to prep the database, to have a taxid per transcript. 
+# At the parsing level it is still possible to consider only the genes
+
+# Let's dig in a bit more in the first hit of the read SRR073777.32, that has 4 ties to 4 different genes
+# >244921	ENST00000631211.1	gencode;ENSG00000280800.1	OTTHUMG00000189716.1|OTTHUMT00000481341.1|FP671120.3-201|FP671120.3|923|lincRNA|
+
+# If we look for the ID 244921 in the sti and tri:
+# the .sti we only have the transcripts, children of themselves:
+>244921 #the transcript
+244921
+# In the tri we can find its parent:
+>244921 #id of the transcript from gene 35699
+35699 #this gene, its parent
+
+# And then the .tri also contains this:
+>35699 #this gene
+1 #its parent = root
+# If we look at the g_v27_key.txt file, we see that 35699 is indeed the taxid corresponding to ENSG00000280800.1
+
+
+# Reminder: without -a option at the database prep step, ties like SRR073777.35 would not be reported.
+# And the .tri and .sti would be different. For the case detailed above, he .tri would only contain:
+>35699 #this gene
+1 #its parent = root
+
+# And the .sti would contain:
+>244921 #the transcript ID
+35699 #its parent (gene)
+
+
+#-------------------------------------------------------------------------------
+# PARSE THE OUTPUT(S)
+#-------------------------------------------------------------------------------
+# You may use the script from the Utils. To see all options:
+perl /home/username/taxonomer_0.5/Utils/taxo_parse_classifier_v05.pl -h
+
+# Simple parsing (of one output), with normalization of the counts for the refname output (can't normalize for taxid level):
+# the -t 1 will split the signal between tied references and thus has everything counted (nothing is kicked out unless some filters are used).
+perl /home/username/taxonomer_0.5/Utils/taxo_parse_classifier_v05.pl -i SRR073777.t1.out -m g_v27 -t 1 -f g_v27_taxonomer.fa -k g_v27_key.txt -n -v
+# the -t 0 output would be at the gene level - note that the refname will only contain counts of non tied reads (which is a good check)
+perl /home/username/taxonomer_0.5/Utils/taxo_parse_classifier_v05.pl -i SRR073777.t0.out -m g_v27 -t 0 -f g_v27_taxonomer.fa -k g_v27_key.txt -n -v
+
+# There will be 2 output files:
+#   - one for lineages (because -k is provided) 
+#     that will have the following columns:
+	#lineage	
+		gencode;ENSG00000161640.15	
+
+	#read_count_normalized [because -n chosen]
+		8.93243386935247e-07
+		#Note: counts are normalized for each reference by ref length 
+		#      and by total amount of classified reads of each sample for all outputs
+        #      Also x 10e9 for readability -> formula of RPKM (Mortazavi 2008)
+		
+#For example let's check the lineage (here gene) with the most counts:
+	sort -k2,2 SRR073777.t1.taxid.tab | head -n 1
+		gencode;ENSG00000156011.16	0.000100034758300952	
+	grep -c ENSG00000156011.16 g_v27_taxonomer.fa
+		20
+	# => it has 20 isoforms and corresponds to PSD3, and the one with highest RPKM:
+	grep ENSG00000156011.16 SRR073777.t1.refname.tab | sort -k7,7r | head -n 1
+		139128	ENST00000286485.12	6665	OTTHUMG00000163711.2|OTTHUMT00000374869.1|PSD3-201|PSD3|6665|protein_coding|	7802	gencode;ENSG00000156011.16	9.01286437832371
+
+#   - one for reference IDs (it will also have the reference names, their description and their lengths).
+	#ref_id = sequence ID in g_v27_taxonomer.fa and in the .out file
+		93688
+		
+	#ref_name = the original sequence ID from gencode.v27.transcripts.fa     
+		ENST00000444115.5	
+	
+	#ref_len = length	
+		2081
+			
+	#ref_desc = description of the sequence as in gencode.v27.transcripts.fa
+		OTTHUMG00000133529.19|OTTHUMT00000344716.2|SHISA5-210|SHISA5|2081|protein_coding|	
+	
+	#taxid, as in the .out file	
+		18982
+	
+	#lineage = what was added to this reference as the lineage in gencode.v27.transcripts.lin.fa			
+		gencode;ENSG00000164054.15	
+		
+	#read_count_normalized [because here -n is chosen]
+		43.3216961354116
+
+
+
+
+# This script allows to get a matrix of counts that can be used as input to DEseq2 (raw counts required).
+# For -t 1, if .out files are in folders t1.out:
+nohup time perl /home/username/taxonomer_0.5/Utils/taxo_parse_classifier_v05.pl -i t1.out -d -p 0 -m g_v27 -t 1 -f g_v27_taxonomer.fa -k g_v27_key.txt -v > t1.out.log &
+tail -n 2 t1.out.log
+	427.86user 11.00system 7:18.62elapsed 100%CPU (0avgtext+0avgdata 423872maxresident)k
+	652912inputs+359000outputs (2major+113654minor)pagefaults 0swaps
+	
+# For -t 0, if .out files are in folders t0.out:
+nohup time perl /home/username/taxonomer_0.5/Utils/taxo_parse_classifier_v05.pl -i t0.out -d -p 0 -m g_v27 -t 0 -f g_v27_taxonomer.fa -k g_v27_key.txt -v > t0.out.log &
+tail -n 2 t0.out.log
+	90.37user 2.14system 1:32.67elapsed 99%CPU (0avgtext+0avgdata 255616maxresident)k
+	2184720inputs+63832outputs (0major+68881minor)pagefaults 0swaps
+
+#The t0.out.CAT.taxid.tab output looks like this:
+							#1 column per sample:
+	lineage					SRR073760.t0.out	SRR073761.t0.out	SRR073762.t0.out	SRR073772.t0.out	SRR073773.t0.out	SRR073777.t0.out
+	gencode;ENSG00000089006.16	355	319	292	116	124	115
+	gencode;ENSG00000203865.9	3	3	5	11	9	10
+	gencode;ENSG00000175544.13	4	9	5	20	9	8
+	gencode;ENSG00000239547.3	1	0	0	1	0	0
+	gencode;ENSG00000185133.13	5	4	5	87	135	92
+	gencode;ENSG00000228839.5	0	0	2	0	0	0
+	gencode;ENSG00000283234.1	1	0	0	34	26	24
+	gencode;ENSG00000186854.10	69	68	66	3	4	7
+	gencode;ENSG00000254370.1	0	1	0	0	0	0
+
+
+#The t1.out.CAT.taxid.tab output looks like this:
+							#1 column per sample:
+	lineage						SRR073760.t1.out	SRR073761.t1.out	SRR073762.t1.out	SRR073772.t1.out	SRR073773.t1.out	SRR073777.t1.out
+	gencode;ENSG00000089006.16	437.503317987797	402.076620759865	359.728663225035	150.773532291238	173.574917178329	158.794426711161
+	gencode;ENSG00000175544.13	7.92146842927178	14.6241663127592	8.11720219613557	20.7266697349581	11.1811481002657	8.56801298147653
+	gencode;ENSG00000203865.9	52.7499999999999	48.5333333333333	45.1166666666666	25.5333333333333	29.8333333333334	23.7
+	gencode;ENSG00000239547.3	1.33333333333333	0					0					1.07692307692308	0.0769230769230769	0
+	gencode;ENSG00000276532.1	0.641322055137845	0.86575928551735	0.481203007518797	0.1036866359447		0.387666233834965	0.232247284878864
+	gencode;ENSG00000185133.13	5					4					5					87.4999999999997	134.999999999998	91.9999999999997
+	gencode;ENSG00000228839.5	0					0					2					0					0					0
+#there are decimals because the ties
+
+
+#These file (and the refname ones as well) can be loaded in R, for example as an input to DEseq2
+
+
+
+
