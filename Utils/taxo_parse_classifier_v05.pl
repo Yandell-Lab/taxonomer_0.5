@@ -630,7 +630,7 @@ sub print_log {
 	print STDERR "             -> if there were any previous output files in $in, they will be deleted\n" if ($d && ! $before);
 	print STDERR "             -> outputs will be concatenated\n" if (defined $cat);
 	print STDERR "                in files with core name = $outname\n" if (defined $cat && $outname);
-	print STDERR "             -> references with less than $cat samples with classified reads will be skipped\n" if (defined $cat);
+	print STDERR "             -> references with less than $cat % samples with classified reads will be skipped\n" if (defined $cat);
 	print STDERR "       --map [sti or tri file] => $name.sti or $name.tri\n";
 	print STDERR "       --key => $key\n" if ($key && ! $before);
 	print STDERR "       --fa  => $fa\n" if (! $before && $fa);
