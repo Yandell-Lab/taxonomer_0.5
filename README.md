@@ -12,7 +12,7 @@ This repository is written in c and python, with cython bringing the two togethe
 python dependencies -- we HIGHLY recommend using the anaconda distribution of python:
 
 1. Python 2.7+
-2. cython
+2. cython 0.20.1
 3. biopython
 
 system dependency:
